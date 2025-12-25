@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "ag-ui-server"
+version = "0.1.0"
+description = "AG-UI Protocol Server with OpenAI Integration"
+authors = ["AG-UI Test"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+openai = "^1.58.0"
+ag-ui-protocol = "^0.1.0"
+python-dotenv = "^1.0.0"
+
+[tool.poetry.scripts]
+dev = "uvicorn server:app --reload --host 0.0.0.0 --port 8000"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
