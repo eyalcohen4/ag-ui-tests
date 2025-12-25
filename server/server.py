@@ -33,6 +33,8 @@ from ag_ui.core import (
     ThinkingTextMessageStartEvent,
     ThinkingTextMessageContentEvent,
     ThinkingTextMessageEndEvent,
+    StepStartedEvent,
+    StepFinishedEvent,
 )
 from ag_ui.encoder import EventEncoder
 import re
@@ -126,6 +128,15 @@ async def agentic_chat_endpoint(request: Request):
                 )
             )
 
+            # Start processing step
+            logger.info("Emitting STEP_STARTED: Processing")
+            yield encoder.encode(
+                StepStartedEvent(
+                    type=EventType.STEP_STARTED,
+                    stepName="Processing"
+                )
+            )
+
             # System prompt to encourage thinking
             system_prompt = """You are a helpful AI assistant. When answering complex questions or performing calculations:
 
@@ -195,6 +206,8 @@ The answer is..."""
             has_started_thinking = False
             is_in_thinking = False
             content_buffer = ""
+            processing_step_finished = False
+            generating_step_started = False
 
             # Process stream chunks (async iteration)
             async for chunk in stream:
@@ -241,6 +254,25 @@ The answer is..."""
                                 # Start thinking
                                 is_in_thinking = True
                                 if not has_started_thinking:
+                                    # Finish processing step, start thinking step
+                                    if not processing_step_finished:
+                                        logger.info("Emitting STEP_FINISHED: Processing")
+                                        yield encoder.encode(
+                                            StepFinishedEvent(
+                                                type=EventType.STEP_FINISHED,
+                                                stepName="Processing"
+                                            )
+                                        )
+                                        processing_step_finished = True
+                                    
+                                    logger.info("Emitting STEP_STARTED: Thinking")
+                                    yield encoder.encode(
+                                        StepStartedEvent(
+                                            type=EventType.STEP_STARTED,
+                                            stepName="Thinking"
+                                        )
+                                    )
+                                    
                                     # First emit THINKING_START to begin the thinking phase
                                     logger.info("Emitting THINKING_START event")
                                     yield encoder.encode(
@@ -268,6 +300,27 @@ The answer is..."""
                                 
                                 if content_buffer.strip():
                                     if not has_started_text_message:
+                                        # Finish processing step and start generating step
+                                        if not processing_step_finished:
+                                            logger.info("Emitting STEP_FINISHED: Processing")
+                                            yield encoder.encode(
+                                                StepFinishedEvent(
+                                                    type=EventType.STEP_FINISHED,
+                                                    stepName="Processing"
+                                                )
+                                            )
+                                            processing_step_finished = True
+                                        
+                                        if not generating_step_started:
+                                            logger.info("Emitting STEP_STARTED: Generating Response")
+                                            yield encoder.encode(
+                                                StepStartedEvent(
+                                                    type=EventType.STEP_STARTED,
+                                                    stepName="Generating Response"
+                                                )
+                                            )
+                                            generating_step_started = True
+                                        
                                         logger.info("Emitting TEXT_MESSAGE_START event")
                                         yield encoder.encode(
                                             TextMessageStartEvent(
@@ -317,6 +370,14 @@ The answer is..."""
                                         type=EventType.THINKING_END
                                     )
                                 )
+                                # Finish thinking step
+                                logger.info("Emitting STEP_FINISHED: Thinking")
+                                yield encoder.encode(
+                                    StepFinishedEvent(
+                                        type=EventType.STEP_FINISHED,
+                                        stepName="Thinking"
+                                    )
+                                )
                                 is_in_thinking = False
                                 content_buffer = after
                                 continue  # Check for more content
@@ -359,10 +420,37 @@ The answer is..."""
                                         result=result
                                     )
                                 )
+                                # Finish previous tool step
+                                yield encoder.encode(
+                                    StepFinishedEvent(
+                                        type=EventType.STEP_FINISHED,
+                                        stepName=f"Using {current_tool_call_name}"
+                                    )
+                                )
                             
                             current_tool_call_id = tool_call.id
                             current_tool_call_name = tool_call.function.name if tool_call.function else None
                             current_tool_call_args = tool_call.function.arguments if tool_call.function else ""
+                            
+                            # Finish processing step if not done
+                            if not processing_step_finished:
+                                logger.info("Emitting STEP_FINISHED: Processing")
+                                yield encoder.encode(
+                                    StepFinishedEvent(
+                                        type=EventType.STEP_FINISHED,
+                                        stepName="Processing"
+                                    )
+                                )
+                                processing_step_finished = True
+                            
+                            # Start tool step
+                            logger.info(f"Emitting STEP_STARTED: Using {current_tool_call_name}")
+                            yield encoder.encode(
+                                StepStartedEvent(
+                                    type=EventType.STEP_STARTED,
+                                    stepName=f"Using {current_tool_call_name}"
+                                )
+                            )
                             
                             logger.info(f"Emitting TOOL_CALL_START: {current_tool_call_name}")
                             yield encoder.encode(
@@ -406,6 +494,15 @@ The answer is..."""
                             )
                         )
                         
+                        # Finish tool step
+                        logger.info(f"Emitting STEP_FINISHED: Using {current_tool_call_name}")
+                        yield encoder.encode(
+                            StepFinishedEvent(
+                                type=EventType.STEP_FINISHED,
+                                stepName=f"Using {current_tool_call_name}"
+                            )
+                        )
+                        
                         tool_results.append({
                             "tool_call_id": current_tool_call_id,
                             "name": current_tool_call_name,
@@ -422,6 +519,15 @@ The answer is..."""
                                 message_id=message_id
                             )
                         )
+                        # Finish generating response step
+                        if generating_step_started:
+                            logger.info("Emitting STEP_FINISHED: Generating Response")
+                            yield encoder.encode(
+                                StepFinishedEvent(
+                                    type=EventType.STEP_FINISHED,
+                                    stepName="Generating Response"
+                                )
+                            )
                     
                     # If we had tool calls, continue the conversation with OpenAI
                     if choice.finish_reason == "tool_calls" and tool_results:
@@ -466,6 +572,7 @@ The answer is..."""
                         # Process continuation stream
                         continuation_message_id = str(uuid.uuid4())
                         continuation_started = False
+                        generating_step_started_continuation = False
                         
                         async for cont_chunk in continuation_stream:
                             cont_choice = cont_chunk.choices[0] if cont_chunk.choices else None
@@ -476,6 +583,17 @@ The answer is..."""
                             
                             if cont_delta.content:
                                 if not continuation_started:
+                                    # Start generating response step
+                                    if not generating_step_started_continuation:
+                                        logger.info("Emitting STEP_STARTED: Generating Response")
+                                        yield encoder.encode(
+                                            StepStartedEvent(
+                                                type=EventType.STEP_STARTED,
+                                                stepName="Generating Response"
+                                            )
+                                        )
+                                        generating_step_started_continuation = True
+                                    
                                     logger.info("Emitting continuation TEXT_MESSAGE_START")
                                     yield encoder.encode(
                                         TextMessageStartEvent(
@@ -502,6 +620,25 @@ The answer is..."""
                                             message_id=continuation_message_id
                                         )
                                     )
+                                    # Finish generating response step
+                                    if generating_step_started_continuation:
+                                        logger.info("Emitting STEP_FINISHED: Generating Response")
+                                        yield encoder.encode(
+                                            StepFinishedEvent(
+                                                type=EventType.STEP_FINISHED,
+                                                stepName="Generating Response"
+                                            )
+                                        )
+
+            # Finish any remaining steps
+            if not processing_step_finished:
+                logger.info("Emitting STEP_FINISHED: Processing")
+                yield encoder.encode(
+                    StepFinishedEvent(
+                        type=EventType.STEP_FINISHED,
+                        stepName="Processing"
+                    )
+                )
 
             # Emit run finished event
             logger.info("Emitting RUN_FINISHED event")

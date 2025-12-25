@@ -4,6 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from './store/chatStore';
 import { ChatMessage } from './components/ChatMessage';
+import { StepIndicator } from './components/StepIndicator';
 
 function App() {
   const { state, sendMessage, dispatch } = useChat();
@@ -106,6 +107,12 @@ function App() {
             {state.messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
+            {/* Show current steps during streaming */}
+            {state.isLoading && state.currentSteps.length > 0 && (
+              <div className="mt-4 ml-14">
+                <StepIndicator steps={state.currentSteps} />
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </>
         )}

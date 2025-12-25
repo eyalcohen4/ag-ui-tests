@@ -9,6 +9,7 @@ import {
   ChatAction,
   ChatContextType,
   Message,
+  Step,
 } from './types';
 
 // Generate unique IDs
@@ -20,6 +21,7 @@ const initialState: ChatState = {
   currentStreamingMessageId: null,
   currentReasoningSteps: [],
   currentToolCalls: new Map(),
+  currentSteps: [],
   isLoading: false,
   error: null,
   threadId: generateId(),
@@ -43,6 +45,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         runId: action.payload.runId,
         currentReasoningSteps: [],
         currentToolCalls: new Map(),
+        currentSteps: [],
         messages: [
           ...state.messages,
           {
@@ -142,6 +145,30 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           msg.id === state.currentStreamingMessageId
             ? { ...msg, toolCalls: Array.from(completedToolCalls.values()) }
             : msg
+        ),
+      };
+    }
+
+    case 'START_STEP': {
+      const newStep: Step = {
+        id: generateId(),
+        name: action.payload.name,
+        status: 'in_progress',
+        startedAt: Date.now(),
+      };
+      return {
+        ...state,
+        currentSteps: [...state.currentSteps, newStep],
+      };
+    }
+
+    case 'FINISH_STEP': {
+      return {
+        ...state,
+        currentSteps: state.currentSteps.map((step) =>
+          step.name === action.payload.name && step.status === 'in_progress'
+            ? { ...step, status: 'completed' as const, finishedAt: Date.now() }
+            : step
         ),
       };
     }
@@ -302,6 +329,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 id: resultEvent.toolCallId,
                 result: resultEvent.result || '',
               },
+            });
+          }
+          
+          // Handle step events
+          if (eventType === 'STEP_STARTED') {
+            const stepEvent = event as any;
+            console.log('[AG-UI Client] Step started:', stepEvent.stepName);
+            dispatch({
+              type: 'START_STEP',
+              payload: { name: stepEvent.stepName },
+            });
+          }
+          
+          if (eventType === 'STEP_FINISHED') {
+            const stepEvent = event as any;
+            console.log('[AG-UI Client] Step finished:', stepEvent.stepName);
+            dispatch({
+              type: 'FINISH_STEP',
+              payload: { name: stepEvent.stepName },
             });
           }
         },

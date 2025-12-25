@@ -12,6 +12,18 @@ export interface ReasoningStep {
   timestamp: number;
 }
 
+// Step status
+export type StepStatus = 'in_progress' | 'completed';
+
+// Step
+export interface Step {
+  id: string;
+  name: string;
+  status: StepStatus;
+  startedAt: number;
+  finishedAt?: number;
+}
+
 // Tool call status
 export type ToolCallStatus = 'pending' | 'executing' | 'completed' | 'error';
 
@@ -41,6 +53,7 @@ export interface ChatState {
   currentStreamingMessageId: string | null;
   currentReasoningSteps: ReasoningStep[];
   currentToolCalls: Map<string, ToolCall>;
+  currentSteps: Step[];
   isLoading: boolean;
   error: string | null;
   threadId: string;
@@ -56,6 +69,8 @@ export type ChatAction =
   | { type: 'START_TOOL_CALL'; payload: { id: string; name: string } }
   | { type: 'UPDATE_TOOL_CALL'; payload: { id: string; argumentsDelta: string } }
   | { type: 'COMPLETE_TOOL_CALL'; payload: { id: string; result: string } }
+  | { type: 'START_STEP'; payload: { name: string } }
+  | { type: 'FINISH_STEP'; payload: { name: string } }
   | { type: 'FINISH_STREAMING' }
   | { type: 'SET_ERROR'; payload: string }
   | { type: 'CLEAR_ERROR' }
